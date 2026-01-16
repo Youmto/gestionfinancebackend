@@ -5,24 +5,40 @@ URL patterns for finances app
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from . import views
+from .views import (
+    CategoryViewSet,
+    TransactionViewSet,
+    DashboardView,
+    MonthlySummaryView,
+    ChartDataView,
+    InitCategoriesView,
+    ExpenseSplitUpdateView,
+    ExportTransactionsView,
+    ExportBudgetReportView,
+    ExportMonthlyReportView,
+)
 
 app_name = 'finances'
 
 router = DefaultRouter()
-router.register(r'categories', views.CategoryViewSet, basename='category')
-router.register(r'transactions', views.TransactionViewSet, basename='transaction')
+router.register(r'categories', CategoryViewSet, basename='category')
+router.register(r'transactions', TransactionViewSet, basename='transaction')
 
 urlpatterns = [
-    # Dashboard and statistics
-    path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
-    path('summary/', views.MonthlySummaryView.as_view(), name='summary'),
-    path('charts/', views.ChartDataView.as_view(), name='charts'),
-    path('init-categories/', views.InitCategoriesView.as_view(), name='init-categories'),
+    # Dashboard
+    path('dashboard/', DashboardView.as_view(), name='dashboard'),
+    path('summary/', MonthlySummaryView.as_view(), name='summary'),
+    path('charts/', ChartDataView.as_view(), name='charts'),
+    path('init-categories/', InitCategoriesView.as_view(), name='init-categories'),
     
-    # Expense splits
-    path('splits/<uuid:pk>/', views.ExpenseSplitUpdateView.as_view(), name='split-detail'),
+    # Splits
+    path('splits/<uuid:pk>/', ExpenseSplitUpdateView.as_view(), name='split-detail'),
     
-    # Router URLs
+    # Exports
+    path('export/transactions/', ExportTransactionsView.as_view(), name='export-transactions'),
+    path('export/budget/', ExportBudgetReportView.as_view(), name='export-budget'),
+    path('export/monthly/', ExportMonthlyReportView.as_view(), name='export-monthly'),
+    
+    # Router
     path('', include(router.urls)),
 ]

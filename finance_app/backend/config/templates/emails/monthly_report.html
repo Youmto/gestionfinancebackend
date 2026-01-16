@@ -1,0 +1,70 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Rapport {{ month_name }} {{ year }} - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}📈{% endblock %}
+{% block header_title %}Rapport {{ month_name }} {{ year }}{% endblock %}
+
+{% block content %}
+<h2>Bonjour {{ first_name }}!</h2>
+
+<p>Voici votre rapport financier pour le mois de <strong>{{ month_name }} {{ year }}</strong> :</p>
+
+<div class="stats-grid" style="margin: 25px 0;">
+    <table width="100%" cellpadding="8" cellspacing="5">
+        <tr>
+            <td style="text-align: center; background-color: #d1fae5; border-radius: 8px; padding: 20px;">
+                <div style="font-size: 28px; font-weight: 700; color: #10B981;">+{{ total_income|floatformat:0 }}</div>
+                <div style="font-size: 12px; color: #065f46; text-transform: uppercase; margin-top: 5px;">Revenus (XAF)</div>
+            </td>
+            <td style="text-align: center; background-color: #fee2e2; border-radius: 8px; padding: 20px;">
+                <div style="font-size: 28px; font-weight: 700; color: #EF4444;">-{{ total_expense|floatformat:0 }}</div>
+                <div style="font-size: 12px; color: #991b1b; text-transform: uppercase; margin-top: 5px;">Dépenses (XAF)</div>
+            </td>
+        </tr>
+    </table>
+</div>
+
+<div style="background: {% if balance >= 0 %}linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%){% else %}linear-gradient(135deg, #fee2e2 0%, #fecaca 100%){% endif %}; border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0;">
+    <p style="margin: 0 0 10px 0; color: {% if balance >= 0 %}#065f46{% else %}#991b1b{% endif %};">
+        {% if balance >= 0 %}Épargne du mois{% else %}Déficit du mois{% endif %}
+    </p>
+    <span style="font-size: 36px; font-weight: 700; color: {% if balance >= 0 %}#10B981{% else %}#EF4444{% endif %};">
+        {% if balance >= 0 %}+{% endif %}{{ balance|floatformat:0 }} XAF
+    </span>
+</div>
+
+{% if top_categories %}
+<div class="divider"></div>
+
+<h3>🏆 Top catégories de dépenses</h3>
+
+{% for cat in top_categories %}
+<div class="category-item" style="margin: 12px 0;">
+    <span class="category-icon">{{ cat.icon }}</span>
+    <div style="flex: 1;">
+        <strong>{{ cat.name }}</strong>
+    </div>
+    <div style="text-align: right;">
+        <span style="font-weight: 600; color: #DC2626;">{{ cat.total|floatformat:0 }} XAF</span>
+        <br>
+        <span style="font-size: 12px; color: #6b7280;">{{ cat.percentage|floatformat:0 }}%</span>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<div style="text-align: center; margin-top: 30px;">
+    <a href="{{ frontend_url }}/dashboard" class="btn">Voir le tableau de bord complet</a>
+</div>
+
+<div class="divider"></div>
+
+<p style="text-align: center; color: #6b7280; font-size: 14px;">
+    {% if balance >= 0 %}
+    🎉 Bravo ! Vous avez réussi à épargner ce mois-ci. Continuez ainsi !
+    {% else %}
+    💡 Conseil : Essayez de définir des budgets pour mieux contrôler vos dépenses.
+    {% endif %}
+</p>
+{% endblock %}

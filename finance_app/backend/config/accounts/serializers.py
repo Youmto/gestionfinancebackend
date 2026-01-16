@@ -8,17 +8,13 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User, EmailVerificationToken, PasswordResetToken, NotificationPreferences
+# IMPORT CORRIGÉ - Suppression de EmailVerificationToken
+from .models import User, PasswordResetToken, NotificationPreferences, EmailVerificationCode
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     """
     Serializer pour l'inscription d'un nouvel utilisateur.
-    
-    Valide que:
-    - L'email n'est pas déjà utilisé
-    - Le mot de passe respecte les règles de sécurité
-    - La confirmation du mot de passe correspond
     """
     
     password = serializers.CharField(
@@ -44,9 +40,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
         extra_kwargs = {
             'email': {'required': True},
-            'first_name': {'required': True},
-            'last_name': {'required': True},
-            'currency': {'required': False, 'default': 'EUR'},
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'currency': {'required': False, 'default': 'XAF'},
         }
     
     def validate_email(self, value):
@@ -88,8 +84,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 class UserLoginSerializer(serializers.Serializer):
     """
     Serializer pour la connexion.
-    
-    Authentifie l'utilisateur et retourne les tokens JWT.
     """
     
     email = serializers.EmailField(
@@ -113,7 +107,6 @@ class UserLoginSerializer(serializers.Serializer):
                 "Email et mot de passe requis."
             )
         
-        # Authentification
         user = authenticate(
             request=self.context.get('request'),
             email=email,
@@ -137,8 +130,6 @@ class UserLoginSerializer(serializers.Serializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     """
     Serializer pour le profil utilisateur.
-    
-    Permet de voir et modifier les informations du profil.
     """
     
     full_name = serializers.ReadOnlyField()
@@ -147,7 +138,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'first_name', 'last_name', 'full_name',
-            'currency', 'avatar', 'is_verified', 'created_at', 'last_login'
+            'phone_number', 'currency', 'avatar', 'is_verified', 
+            'created_at', 'last_login'
         ]
         read_only_fields = ['id', 'email', 'is_verified', 'created_at', 'last_login']
 
@@ -155,16 +147,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer pour la mise à jour du profil.
-    
-    Champs modifiables: first_name, last_name, currency, avatar
     """
     
     class Meta:
         model = User
-        fields = ['first_name', 'last_name', 'currency', 'avatar']
+        fields = ['first_name', 'last_name', 'phone_number', 'currency', 'avatar']
         extra_kwargs = {
             'first_name': {'required': False},
             'last_name': {'required': False},
+            'phone_number': {'required': False},
             'currency': {'required': False},
             'avatar': {'required': False},
         }
@@ -173,8 +164,6 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 class ChangePasswordSerializer(serializers.Serializer):
     """
     Serializer pour le changement de mot de passe.
-    
-    Vérifie l'ancien mot de passe et valide le nouveau.
     """
     
     old_password = serializers.CharField(
@@ -221,7 +210,6 @@ class ChangePasswordSerializer(serializers.Serializer):
                 'new_password_confirm': "Les mots de passe ne correspondent pas."
             })
         
-        # Vérifie que le nouveau est différent de l'ancien
         if attrs['old_password'] == attrs['new_password']:
             raise serializers.ValidationError({
                 'new_password': "Le nouveau mot de passe doit être différent de l'ancien."
@@ -240,8 +228,6 @@ class ChangePasswordSerializer(serializers.Serializer):
 class PasswordResetRequestSerializer(serializers.Serializer):
     """
     Serializer pour la demande de réinitialisation de mot de passe.
-    
-    Vérifie que l'email existe et crée un token.
     """
     
     email = serializers.EmailField(
@@ -250,34 +236,12 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     )
     
     def validate_email(self, value):
-        """Vérifie que l'email existe (mais ne révèle pas l'info)."""
-        # Note: On ne révèle pas si l'email existe ou non pour des raisons de sécurité
         return value.lower()
-    
-    def save(self, **kwargs):
-        """Crée un token de réinitialisation si l'utilisateur existe."""
-        email = self.validated_data['email']
-        
-        try:
-            user = User.objects.get(email__iexact=email)
-            # Invalider les anciens tokens
-            PasswordResetToken.objects.filter(
-                user=user,
-                is_used=False
-            ).update(is_used=True)
-            
-            # Créer un nouveau token
-            token = PasswordResetToken.objects.create(user=user)
-            return token
-        except User.DoesNotExist:
-            return None
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """
     Serializer pour la confirmation de réinitialisation de mot de passe.
-    
-    Valide le token et définit le nouveau mot de passe.
     """
     
     token = serializers.CharField(
@@ -335,7 +299,6 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.set_password(self.validated_data['new_password'])
         user.save(update_fields=['password'])
         
-        # Marquer le token comme utilisé
         self.token_obj.mark_as_used()
         
         return user
@@ -343,7 +306,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class ResendVerificationSerializer(serializers.Serializer):
     """
-    Serializer pour renvoyer l'email de vérification.
+    Serializer pour renvoyer le code de vérification.
     """
     
     email = serializers.EmailField(
@@ -367,16 +330,14 @@ class ResendVerificationSerializer(serializers.Serializer):
             )
     
     def save(self, **kwargs):
-        """Crée un nouveau token de vérification."""
-        # Invalider les anciens tokens
-        EmailVerificationToken.objects.filter(
-            user=self.user,
-            is_used=False
-        ).update(is_used=True)
-        
-        # Créer un nouveau token
-        token = EmailVerificationToken.objects.create(user=self.user)
-        return token
+        """Crée un nouveau code de vérification."""
+        # Créer un nouveau code OTP
+        verification = EmailVerificationCode.create_for_email(
+            email=self.user.email,
+            purpose='registration',
+            user=self.user
+        )
+        return verification
 
 
 class NotificationPreferencesSerializer(serializers.ModelSerializer):
@@ -390,14 +351,16 @@ class NotificationPreferencesSerializer(serializers.ModelSerializer):
             'email_reminders',
             'email_group_activity',
             'email_weekly_summary',
-            'push_enabled'
+            'email_budget_alerts',
+            'email_payment_notifications',
+            'push_enabled',
+            'reminder_time'
         ]
 
 
 class TokenResponseSerializer(serializers.Serializer):
     """
     Serializer pour la réponse avec tokens JWT.
-    Utilisé pour documenter l'API (OpenAPI).
     """
     
     access = serializers.CharField(help_text="Token d'accès JWT")
@@ -408,7 +371,6 @@ class TokenResponseSerializer(serializers.Serializer):
 class UserMinimalSerializer(serializers.ModelSerializer):
     """
     Serializer minimal pour l'affichage d'un utilisateur.
-    Utilisé dans les listes et références.
     """
     
     full_name = serializers.ReadOnlyField()
@@ -417,3 +379,120 @@ class UserMinimalSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'avatar']
         read_only_fields = fields
+
+
+# ============================================================
+# EMAIL VERIFICATION SERIALIZERS (OTP)
+# ============================================================
+
+class SendVerificationCodeSerializer(serializers.Serializer):
+    """Serializer pour demander un code de vérification."""
+    
+    email = serializers.EmailField()
+    purpose = serializers.ChoiceField(
+        choices=['registration', 'login', 'password_reset', 'email_change'],
+        default='registration'
+    )
+    
+    def validate_email(self, value):
+        return value.lower()
+    
+    def validate(self, attrs):
+        """Validations croisées selon le purpose."""
+        email = attrs['email']
+        purpose = attrs['purpose']
+        
+        user_exists = User.objects.filter(email=email).exists()
+        
+        if purpose == 'registration' and user_exists:
+            raise serializers.ValidationError({
+                'email': "Un compte existe déjà avec cette adresse email."
+            })
+        
+        if purpose in ['login', 'password_reset'] and not user_exists:
+            raise serializers.ValidationError({
+                'email': "Aucun compte trouvé avec cette adresse email."
+            })
+        
+        return attrs
+
+
+class VerifyCodeSerializer(serializers.Serializer):
+    """Serializer pour vérifier un code OTP."""
+    
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6, min_length=6)
+    purpose = serializers.ChoiceField(
+        choices=['registration', 'login', 'password_reset', 'email_change']
+    )
+    
+    def validate_email(self, value):
+        return value.lower()
+    
+    def validate_code(self, value):
+        """Vérifie que le code contient uniquement des chiffres."""
+        if not value.isdigit():
+            raise serializers.ValidationError("Le code doit contenir uniquement des chiffres.")
+        return value
+
+
+class RegisterWithCodeSerializer(serializers.Serializer):
+    """Serializer pour l'inscription après vérification du code."""
+    
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6, min_length=6)
+    password = serializers.CharField(min_length=8, write_only=True)
+    password_confirm = serializers.CharField(min_length=8, write_only=True)
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    
+    def validate_email(self, value):
+        return value.lower()
+    
+    def validate_code(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("Le code doit contenir uniquement des chiffres.")
+        return value
+    
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password_confirm']:
+            raise serializers.ValidationError({
+                'password_confirm': "Les mots de passe ne correspondent pas."
+            })
+        return attrs
+
+
+class ResetPasswordWithCodeSerializer(serializers.Serializer):
+    """Serializer pour réinitialiser le mot de passe avec un code."""
+    
+    email = serializers.EmailField()
+    code = serializers.CharField(max_length=6, min_length=6)
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    new_password_confirm = serializers.CharField(min_length=8, write_only=True)
+    
+    def validate_email(self, value):
+        return value.lower()
+    
+    def validate_code(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError("Le code doit contenir uniquement des chiffres.")
+        return value
+    
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError({
+                'new_password_confirm': "Les mots de passe ne correspondent pas."
+            })
+        return attrs
+
+
+class ResendCodeSerializer(serializers.Serializer):
+    """Serializer pour renvoyer un code."""
+    
+    email = serializers.EmailField()
+    purpose = serializers.ChoiceField(
+        choices=['registration', 'login', 'password_reset', 'email_change']
+    )
+    
+    def validate_email(self, value):
+        return value.lower()

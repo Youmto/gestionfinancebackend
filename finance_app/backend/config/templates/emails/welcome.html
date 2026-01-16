@@ -1,0 +1,36 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Bienvenue - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}🎉{% endblock %}
+{% block header_title %}Bienvenue sur {{ app_name }}!{% endblock %}
+
+{% block content %}
+<h2>Bonjour {{ first_name }}!</h2>
+
+<p>Félicitations ! Votre compte a été créé avec succès. Vous pouvez maintenant commencer à gérer vos finances personnelles.</p>
+
+<div class="info-box success">
+    <strong>✅ Compte activé</strong><br>
+    Votre adresse email a été vérifiée et votre compte est prêt à l'emploi.
+</div>
+
+<h3>🚀 Pour bien démarrer :</h3>
+
+<ul style="color: #4b5563;">
+    <li><strong>Ajoutez vos premières transactions</strong> - Enregistrez vos revenus et dépenses</li>
+    <li><strong>Définissez des budgets</strong> - Fixez des limites par catégorie</li>
+    <li><strong>Créez des rappels</strong> - Ne manquez plus aucune échéance</li>
+    <li><strong>Rejoignez un groupe</strong> - Partagez des dépenses avec vos proches</li>
+</ul>
+
+<div style="text-align: center;">
+    <a href="{{ frontend_url }}/dashboard" class="btn">Accéder à mon tableau de bord</a>
+</div>
+
+<div class="divider"></div>
+
+<p style="color: #6b7280;">
+    Des questions ? N'hésitez pas à nous contacter à {{ support_email }}.
+</p>
+{% endblock %}

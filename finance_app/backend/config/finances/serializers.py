@@ -17,19 +17,24 @@ class CategorySerializer(serializers.ModelSerializer):
     Serializer pour les catégories.
     
     Affiche les catégories système et personnalisées de l'utilisateur.
+    Inclut le statut du budget si défini.
     """
     
     transaction_count = serializers.SerializerMethodField(
         help_text="Nombre de transactions dans cette catégorie"
     )
+    budget_status = serializers.SerializerMethodField(
+        help_text="Statut du budget mensuel"
+    )
     
     class Meta:
         model = Category
         fields = [
-            'id', 'name', 'icon', 'color', 'type', 
+            'id', 'name', 'description', 'icon', 'color', 'type',
+            'budget', 'budget_alert_threshold', 'budget_status',
             'is_system', 'transaction_count', 'created_at'
         ]
-        read_only_fields = ['id', 'is_system', 'created_at']
+        read_only_fields = ['id', 'is_system', 'created_at', 'budget_status']
     
     def get_transaction_count(self, obj):
         """Retourne le nombre de transactions pour cette catégorie."""
@@ -40,6 +45,10 @@ class CategorySerializer(serializers.ModelSerializer):
                 is_deleted=False
             ).count()
         return 0
+    
+    def get_budget_status(self, obj):
+        """Retourne le statut du budget si défini."""
+        return obj.get_budget_status()
     
     def validate_name(self, value):
         """Vérifie que le nom n'est pas déjà utilisé par l'utilisateur."""
@@ -69,6 +78,22 @@ class CategorySerializer(serializers.ModelSerializer):
         
         return value
     
+    def validate_budget(self, value):
+        """Vérifie que le budget est positif."""
+        if value is not None and value < 0:
+            raise serializers.ValidationError(
+                "Le budget doit être positif."
+            )
+        return value
+    
+    def validate_budget_alert_threshold(self, value):
+        """Vérifie que le seuil est entre 0 et 100."""
+        if value < 0 or value > 100:
+            raise serializers.ValidationError(
+                "Le seuil d'alerte doit être entre 0 et 100."
+            )
+        return value
+    
     def create(self, validated_data):
         """Crée une catégorie personnalisée pour l'utilisateur."""
         validated_data['user'] = self.context['request'].user
@@ -83,12 +108,57 @@ class CategoryCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Category
-        fields = ['name', 'icon', 'color', 'type']
+        fields = [
+            'id',
+            'name',
+            'description',
+            'icon',
+            'color',
+            'type',
+            'budget',
+            'budget_alert_threshold'
+        ]
+        read_only_fields = ['id']
         extra_kwargs = {
             'icon': {'required': False, 'default': '📁'},
             'color': {'required': False, 'default': '#6B7280'},
             'type': {'required': False, 'default': 'expense'},
+            'description': {'required': False},
+            'budget': {'required': False},
+            'budget_alert_threshold': {'required': False, 'default': 80},
         }
+    
+    def validate_budget(self, value):
+        """Vérifie que le budget est positif."""
+        if value is not None and value < 0:
+            raise serializers.ValidationError(
+                "Le budget doit être positif."
+            )
+        return value
+    
+    def validate_budget_alert_threshold(self, value):
+        """Vérifie que le seuil est entre 0 et 100."""
+        if value is not None and (value < 0 or value > 100):
+            raise serializers.ValidationError(
+                "Le seuil d'alerte doit être entre 0 et 100."
+            )
+        return value
+    
+    def create(self, validated_data):
+        """Crée une catégorie personnalisée pour l'utilisateur."""
+        validated_data['user'] = self.context['request'].user
+        validated_data['is_system'] = False
+        return super().create(validated_data)
+
+
+class CategorySimpleSerializer(serializers.ModelSerializer):
+    """
+    Serializer simplifié pour les listes déroulantes.
+    """
+    
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'icon', 'color', 'type']
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -98,7 +168,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     Affiche les détails complets d'une transaction avec les relations.
     """
     
-    category_details = CategorySerializer(source='category', read_only=True)
+    category_details = CategorySimpleSerializer(source='category', read_only=True)
     user_details = UserMinimalSerializer(source='user', read_only=True)
     signed_amount = serializers.ReadOnlyField()
     is_personal = serializers.ReadOnlyField()
@@ -132,10 +202,12 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
         fields = [
+            'id',
             'category', 'group', 'amount', 'type',
             'description', 'date', 'is_recurring',
             'recurring_config', 'attachment'
         ]
+        read_only_fields = ['id']
         extra_kwargs = {
             'description': {'required': False, 'default': ''},
             'date': {'required': True},
@@ -335,6 +407,7 @@ class DashboardSerializer(serializers.Serializer):
     recent_transactions = TransactionListSerializer(many=True)
     expense_by_category = serializers.ListField()
     income_by_category = serializers.ListField()
+    budget_alerts = serializers.ListField()
 
 
 class MonthlySummarySerializer(serializers.Serializer):
@@ -362,6 +435,30 @@ class CategoryStatsSerializer(serializers.Serializer):
     total = serializers.DecimalField(max_digits=15, decimal_places=2)
     count = serializers.IntegerField()
     percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
+
+
+class BudgetStatusSerializer(serializers.Serializer):
+    """
+    Serializer pour le statut du budget d'une catégorie.
+    """
+    
+    budget = serializers.DecimalField(max_digits=15, decimal_places=2)
+    spent = serializers.DecimalField(max_digits=15, decimal_places=2)
+    remaining = serializers.DecimalField(max_digits=15, decimal_places=2)
+    percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
+    is_over_budget = serializers.BooleanField()
+    is_alert = serializers.BooleanField()
+    alert_threshold = serializers.IntegerField()
+
+
+class BudgetOverviewSerializer(serializers.Serializer):
+    """
+    Serializer pour l'aperçu des budgets.
+    """
+    
+    period = serializers.DictField()
+    summary = serializers.DictField()
+    categories = serializers.ListField()
 
 
 class ChartDataSerializer(serializers.Serializer):

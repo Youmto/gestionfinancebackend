@@ -5,7 +5,7 @@ Finances views - Category, Transaction, Dashboard and ExpenseSplit views
 from decimal import Decimal
 from datetime import datetime, timedelta
 from calendar import monthrange
-
+from .services import BudgetAlertService
 from django.db.models import Sum, Case, When, DecimalField, Count, Q
 from django.utils import timezone
 from rest_framework import viewsets, status, generics
@@ -14,17 +14,18 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
+from .exports import ExcelExporter, PDFExporter
 
 from groups.models import GroupMember
 from .models import Category, Transaction, ExpenseSplit, create_default_categories
 from .serializers import (
-    CategorySerializer, CategoryCreateSerializer,
+    CategorySerializer, CategoryCreateSerializer, CategorySimpleSerializer,
     TransactionSerializer, TransactionCreateSerializer, TransactionListSerializer,
     ExpenseSplitSerializer, ExpenseSplitCreateSerializer, 
     CreateSplitsSerializer, ExpenseSplitUpdateSerializer,
     DashboardSerializer, MonthlySummarySerializer,
     CategoryStatsSerializer, ChartDataSerializer,
-    TransactionFilterSerializer
+    TransactionFilterSerializer, BudgetStatusSerializer, BudgetOverviewSerializer
 )
 
 
@@ -112,6 +113,186 @@ class CategoryViewSet(viewsets.ModelViewSet):
         queryset = Category.get_for_user(request.user, category_type)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+    
+    # ============ NOUVEAUX ENDPOINTS BUDGET ============
+    
+    @action(detail=True, methods=['get'])
+    @extend_schema(
+        summary="Statut du budget d'une catégorie",
+        description="Retourne le statut détaillé du budget pour une catégorie.",
+        parameters=[
+            OpenApiParameter('year', int, description="Année (défaut: année courante)"),
+            OpenApiParameter('month', int, description="Mois 1-12 (défaut: mois courant)")
+        ],
+        responses={200: BudgetStatusSerializer},
+        tags=['Catégories', 'Budget']
+    )
+    def budget_status(self, request, pk=None):
+        """Retourne le statut du budget d'une catégorie."""
+        category = self.get_object()
+        
+        # Récupérer année/mois
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+        
+        if year and month:
+            year = int(year)
+            month = int(month)
+        else:
+            now = timezone.now()
+            year = now.year
+            month = now.month
+        
+        # Obtenir le statut
+        budget_status = category.get_budget_status(year, month)
+        
+        if budget_status is None:
+            return Response({
+                'category': CategorySerializer(category, context={'request': request}).data,
+                'message': 'Aucun budget défini pour cette catégorie',
+                'has_budget': False
+            })
+        
+        # Récupérer les transactions récentes du mois
+        recent_transactions = Transaction.objects.filter(
+            user=request.user,
+            category=category,
+            type=Transaction.TransactionType.EXPENSE,
+            date__year=year,
+            date__month=month,
+            is_deleted=False
+        ).order_by('-date')[:5]
+        
+        return Response({
+            'category': CategorySerializer(category, context={'request': request}).data,
+            'period': {'year': year, 'month': month},
+            'has_budget': True,
+            **budget_status,
+            'recent_transactions': TransactionListSerializer(recent_transactions, many=True).data
+        })
+    
+    @action(detail=False, methods=['get'])
+    @extend_schema(
+        summary="Aperçu de tous les budgets",
+        description="Retourne un résumé de tous les budgets définis avec leur statut.",
+        parameters=[
+            OpenApiParameter('year', int, description="Année (défaut: année courante)"),
+            OpenApiParameter('month', int, description="Mois 1-12 (défaut: mois courant)")
+        ],
+        responses={200: BudgetOverviewSerializer},
+        tags=['Catégories', 'Budget']
+    )
+    def budget_overview(self, request):
+        """Retourne un aperçu de tous les budgets."""
+        now = timezone.now()
+        year = int(request.query_params.get('year', now.year))
+        month = int(request.query_params.get('month', now.month))
+        
+        # Catégories avec budget
+        categories = self.get_queryset().filter(
+            budget__isnull=False,
+            type__in=[Category.CategoryType.EXPENSE, Category.CategoryType.BOTH]
+        )
+        
+        results = []
+        total_budget = Decimal('0.00')
+        total_spent = Decimal('0.00')
+        alerts_count = 0
+        over_budget_count = 0
+        
+        for category in categories:
+            status_data = category.get_budget_status(year, month)
+            if status_data:
+                total_budget += Decimal(str(status_data['budget']))
+                total_spent += Decimal(str(status_data['spent']))
+                
+                if status_data['is_over_budget']:
+                    over_budget_count += 1
+                elif status_data['is_alert']:
+                    alerts_count += 1
+                
+                results.append({
+                    'id': str(category.id),
+                    'name': category.name,
+                    'description': category.description,
+                    'icon': category.icon,
+                    'color': category.color,
+                    **status_data
+                })
+        
+        # Trier par pourcentage décroissant
+        results.sort(key=lambda x: x['percentage'], reverse=True)
+        
+        return Response({
+            'period': {'year': year, 'month': month},
+            'summary': {
+                'total_budget': float(total_budget),
+                'total_spent': float(total_spent),
+                'total_remaining': float(total_budget - total_spent),
+                'overall_percentage': round(float(total_spent / total_budget * 100) if total_budget > 0 else 0, 2),
+                'categories_count': len(results),
+                'alerts_count': alerts_count,
+                'over_budget_count': over_budget_count
+            },
+            'categories': results
+        })
+    
+    @action(detail=False, methods=['get'])
+    @extend_schema(
+        summary="Alertes budget",
+        description="Retourne les catégories en alerte ou avec budget dépassé.",
+        parameters=[
+            OpenApiParameter('year', int, description="Année"),
+            OpenApiParameter('month', int, description="Mois 1-12")
+        ],
+        tags=['Catégories', 'Budget']
+    )
+    def budget_alerts(self, request):
+        """Retourne les catégories en alerte ou dépassées."""
+        now = timezone.now()
+        year = int(request.query_params.get('year', now.year))
+        month = int(request.query_params.get('month', now.month))
+        
+        categories = self.get_queryset().filter(
+            budget__isnull=False,
+            type__in=[Category.CategoryType.EXPENSE, Category.CategoryType.BOTH]
+        )
+        
+        over_budget = []
+        alerts = []
+        healthy = []
+        
+        for category in categories:
+            status_data = category.get_budget_status(year, month)
+            if status_data:
+                item = {
+                    'id': str(category.id),
+                    'name': category.name,
+                    'description': category.description,
+                    'icon': category.icon,
+                    'color': category.color,
+                    **status_data
+                }
+                
+                if status_data['is_over_budget']:
+                    over_budget.append(item)
+                elif status_data['is_alert']:
+                    alerts.append(item)
+                else:
+                    healthy.append(item)
+        
+        return Response({
+            'period': {'year': year, 'month': month},
+            'over_budget': over_budget,
+            'alerts': alerts,
+            'healthy': healthy,
+            'summary': {
+                'over_budget_count': len(over_budget),
+                'alerts_count': len(alerts),
+                'healthy_count': len(healthy)
+            }
+        })
+    # ===================================================
 
 
 @extend_schema_view(
@@ -249,6 +430,28 @@ class TransactionViewSet(viewsets.ModelViewSet):
         request=CreateSplitsSerializer,
         tags=['Transactions']
     )
+    
+    def perform_create(self, serializer):
+        """Crée une transaction et vérifie les alertes budget."""
+        transaction = serializer.save(user=self.request.user)
+        
+        # Vérifier les alertes budget pour les dépenses
+        if transaction.type == 'expense' and transaction.category:
+            BudgetAlertService.check_and_send_alerts(
+                user=self.request.user,
+                category=transaction.category
+            )
+
+    def perform_update(self, serializer):
+        """Met à jour une transaction et vérifie les alertes budget."""
+        transaction = serializer.save()
+        
+        # Vérifier les alertes budget pour les dépenses
+        if transaction.type == 'expense' and transaction.category:
+            BudgetAlertService.check_and_send_alerts(
+                user=self.request.user,
+                category=transaction.category
+            )
     def split(self, request, pk=None):
         """Crée des partages pour une transaction de groupe."""
         transaction = self.get_object()
@@ -354,7 +557,7 @@ class ExpenseSplitUpdateView(generics.UpdateAPIView):
 
 @extend_schema(
     summary="Tableau de bord financier",
-    description="Retourne les statistiques financières de l'utilisateur.",
+    description="Retourne les statistiques financières de l'utilisateur avec alertes budget.",
     tags=['Dashboard']
 )
 class DashboardView(APIView):
@@ -367,6 +570,7 @@ class DashboardView(APIView):
     - Revenus et dépenses du mois
     - Transactions récentes
     - Répartition par catégorie
+    - Alertes budget (NOUVEAU)
     """
     
     permission_classes = [IsAuthenticated]
@@ -481,6 +685,29 @@ class DashboardView(APIView):
                 'percentage': round(percentage, 2)
             })
         
+        # ============ NOUVEAU: Alertes Budget ============
+        budget_alerts = []
+        categories_with_budget = Category.objects.filter(
+            Q(is_system=True) | Q(user=user),
+            budget__isnull=False,
+            type__in=[Category.CategoryType.EXPENSE, Category.CategoryType.BOTH]
+        )
+        
+        for category in categories_with_budget:
+            status_data = category.get_budget_status(now.year, now.month)
+            if status_data and (status_data['is_alert'] or status_data['is_over_budget']):
+                budget_alerts.append({
+                    'category_id': str(category.id),
+                    'category_name': category.name,
+                    'category_icon': category.icon,
+                    'category_color': category.color,
+                    **status_data
+                })
+        
+        # Trier par pourcentage décroissant
+        budget_alerts.sort(key=lambda x: x['percentage'], reverse=True)
+        # ================================================
+        
         data = {
             'total_balance': total_balance,
             'total_income': total_income,
@@ -490,6 +717,7 @@ class DashboardView(APIView):
             'recent_transactions': TransactionListSerializer(recent_transactions, many=True).data,
             'expense_by_category': expense_list,
             'income_by_category': income_list,
+            'budget_alerts': budget_alerts,  # NOUVEAU
         }
         
         return Response(data)
@@ -715,3 +943,110 @@ class InitCategoriesView(APIView):
             'message': f'{count} catégories créées.',
             'created_count': count
         })
+
+
+class ExportTransactionsView(APIView):
+    """
+    Exporter les transactions en Excel ou PDF.
+    
+    GET /api/v1/finances/export/transactions/?format=excel&date_from=2026-01-01&date_to=2026-01-31
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        export_format = request.query_params.get('format', 'excel')
+        
+        # Filtres
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        transaction_type = request.query_params.get('type')
+        category_id = request.query_params.get('category')
+        
+        # Requête de base
+        transactions = Transaction.objects.filter(
+            user=user,
+            group__isnull=True,
+            is_deleted=False
+        ).select_related('category').order_by('-date')
+        
+        # Appliquer les filtres
+        if date_from:
+            transactions = transactions.filter(date__gte=date_from)
+        if date_to:
+            transactions = transactions.filter(date__lte=date_to)
+        if transaction_type:
+            transactions = transactions.filter(type=transaction_type)
+        if category_id:
+            transactions = transactions.filter(category_id=category_id)
+        
+        # Titre du rapport
+        title = "Transactions"
+        if date_from and date_to:
+            title = f"Transactions du {date_from} au {date_to}"
+        
+        # Exporter
+        if export_format == 'pdf':
+            return PDFExporter.export_transactions(transactions, user, title)
+        else:
+            return ExcelExporter.export_transactions(transactions, user, title)
+
+
+class ExportBudgetReportView(APIView):
+    """
+    Exporter le rapport de budget en Excel.
+    
+    GET /api/v1/finances/export/budget/?year=2026&month=1
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        now = timezone.now()
+        year = int(request.query_params.get('year', now.year))
+        month = int(request.query_params.get('month', now.month))
+        
+        categories = Category.objects.filter(
+            Q(is_system=True) | Q(user=user),
+            budget__isnull=False,
+            type__in=[Category.CategoryType.EXPENSE, Category.CategoryType.BOTH]
+        )
+        
+        return ExcelExporter.export_budget_report(categories, user, year, month)
+
+
+class ExportMonthlyReportView(APIView):
+    """
+    Exporter le rapport mensuel complet en PDF.
+    
+    GET /api/v1/finances/export/monthly/?year=2026&month=1
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        now = timezone.now()
+        year = int(request.query_params.get('year', now.year))
+        month = int(request.query_params.get('month', now.month))
+        
+        # Transactions du mois
+        transactions = Transaction.objects.filter(
+            user=user,
+            group__isnull=True,
+            is_deleted=False,
+            date__year=year,
+            date__month=month
+        ).select_related('category').order_by('-date')
+        
+        # Catégories avec budget
+        categories = Category.objects.filter(
+            Q(is_system=True) | Q(user=user),
+            budget__isnull=False
+        )
+        
+        return PDFExporter.export_monthly_report(user, year, month, transactions, categories)

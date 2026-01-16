@@ -1,0 +1,26 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Paiement reçu - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}✅{% endblock %}
+{% block header_title %}Paiement reçu!{% endblock %}
+
+{% block content %}
+<h2>Bonjour {{ first_name }}!</h2>
+
+<p>Bonne nouvelle ! <strong>{{ debtor_name }}</strong> a marqué sa part comme payée.</p>
+
+<div style="background-color: #d1fae5; border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0;">
+    <p style="margin: 0 0 10px 0; color: #065f46;">Montant reçu</p>
+    <span style="font-size: 36px; font-weight: 700; color: #10B981;">{{ amount|floatformat:0 }} XAF</span>
+</div>
+
+<div style="background-color: #f9fafb; border-radius: 8px; padding: 15px; margin: 20px 0;">
+    <p style="margin: 5px 0;"><strong>👤 De:</strong> {{ debtor_name }}</p>
+    <p style="margin: 5px 0;"><strong>👥 Groupe:</strong> {{ group_name }}</p>
+</div>
+
+<div style="text-align: center; margin-top: 25px;">
+    <a href="{{ frontend_url }}/groups" class="btn">Voir le groupe</a>
+</div>
+{% endblock %}

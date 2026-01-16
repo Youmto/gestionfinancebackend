@@ -1,0 +1,39 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Dépense importante - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}💸{% endblock %}
+{% block header_title %}Dépense importante enregistrée{% endblock %}
+
+{% block content %}
+<h2>Bonjour {{ first_name }}!</h2>
+
+<p>Une dépense importante vient d'être enregistrée sur votre compte :</p>
+
+<div style="background-color: #fee2e2; border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0;">
+    <span style="font-size: 42px; font-weight: 700; color: #DC2626;">-{{ amount|floatformat:0 }} XAF</span>
+</div>
+
+<div style="background-color: #f9fafb; border-radius: 8px; padding: 15px; margin: 20px 0;">
+    <p style="margin: 5px 0;"><strong>📁 Catégorie:</strong> {{ category_name }}</p>
+    {% if description %}
+    <p style="margin: 5px 0;"><strong>📝 Description:</strong> {{ description }}</p>
+    {% endif %}
+</div>
+
+<div class="info-box">
+    <strong>ℹ️ Information</strong><br>
+    Cette notification est envoyée automatiquement pour les dépenses dépassant un certain seuil. 
+    Si c'est bien vous qui avez effectué cette transaction, tout va bien !
+</div>
+
+<div style="text-align: center; margin-top: 25px;">
+    <a href="{{ frontend_url }}/transactions" class="btn">Voir mes transactions</a>
+</div>
+
+<div class="info-box alert" style="margin-top: 20px;">
+    <strong>🚨 Ce n'est pas vous ?</strong><br>
+    Si vous n'avez pas effectué cette dépense, connectez-vous immédiatement pour vérifier votre compte 
+    et changez votre mot de passe.
+</div>
+{% endblock %}

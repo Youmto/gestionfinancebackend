@@ -1,0 +1,29 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Rappel - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}🔔{% endblock %}
+{% block header_title %}Rappel{% endblock %}
+
+{% block content %}
+<h2>Bonjour {{ first_name }}!</h2>
+
+<p>Vous avez un rappel programmé :</p>
+
+<div style="background-color: #f9fafb; border-radius: 12px; padding: 20px; margin: 20px 0;">
+    <h3 style="margin-top: 0; color: #1f2937;">{{ title }}</h3>
+    {% if description %}
+    <p style="color: #6b7280;">{{ description }}</p>
+    {% endif %}
+    <p style="margin-bottom: 0;">
+        <strong>📅 Échéance :</strong> {{ due_date }}
+        {% if amount %}
+        <br><strong>💰 Montant :</strong> {{ amount|floatformat:0 }} XAF
+        {% endif %}
+    </p>
+</div>
+
+<div style="text-align: center;">
+    <a href="{{ frontend_url }}/reminders" class="btn">Voir mes rappels</a>
+</div>
+{% endblock %}

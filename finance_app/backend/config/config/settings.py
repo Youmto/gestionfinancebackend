@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'groups.apps.GroupsConfig',
     'reminders.apps.RemindersConfig',
     'events.apps.EventsConfig',
+    'payments.apps.PaymentsConfig',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -256,3 +257,61 @@ APP_SETTINGS = {
     'DEFAULT_CURRENCY': 'EUR',
     'SUPPORTED_CURRENCIES': ['EUR', 'USD', 'GBP', 'CHF', 'CAD', 'XAF', 'XOF'],
 }
+
+# ============================================================
+# EMAIL CONFIGURATION
+# ============================================================
+
+# Pour le développement (affiche les emails dans la console)
+# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Pour la production (SMTP réel)
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'Finance App <noreply@financeapp.com>')
+
+# Configuration des emails de l'application
+APP_NAME = 'Finance App'
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+# Durée de validité des codes OTP (en minutes)
+OTP_VALIDITY_MINUTES = 15
+OTP_MAX_ATTEMPTS = 5
+
+
+# ============ CELERY CONFIGURATION ============
+
+# Broker (Redis)
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+
+# Serialization
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+
+# Timezone
+CELERY_TIMEZONE = 'Europe/Paris'
+CELERY_ENABLE_UTC = True
+
+# Task settings
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes max
+CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes soft limit
+
+# Celery Beat (scheduler)
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Results
+CELERY_RESULT_EXTENDED = True
+CELERY_RESULT_EXPIRES = 3600  # 1 heure
+
+# Add to INSTALLED_APPS
+INSTALLED_APPS += [
+    'django_celery_beat',
+    'django_celery_results',
+]

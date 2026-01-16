@@ -7,12 +7,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.utils import extend_schema
 
-from .models import User, EmailVerificationToken, PasswordResetToken, NotificationPreferences
+# IMPORT CORRIGÉ - Suppression de EmailVerificationToken
+from .models import User, PasswordResetToken, NotificationPreferences, EmailVerificationCode
 from .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
@@ -27,8 +27,6 @@ from .serializers import (
 class RegisterView(generics.CreateAPIView):
     """
     Inscription d'un nouvel utilisateur.
-    
-    Crée un compte utilisateur et envoie un email de vérification.
     """
     permission_classes = [AllowAny]
     serializer_class = UserRegistrationSerializer
@@ -48,7 +46,7 @@ class RegisterView(generics.CreateAPIView):
         
         return Response({
             'success': True,
-            'message': 'Compte créé avec succès. Vérifiez votre email.',
+            'message': 'Compte créé avec succès.',
             'data': {
                 'user': UserProfileSerializer(user).data,
                 'tokens': {
@@ -62,8 +60,6 @@ class RegisterView(generics.CreateAPIView):
 class LoginView(APIView):
     """
     Connexion utilisateur.
-    
-    Authentifie l'utilisateur et retourne les tokens JWT.
     """
     permission_classes = [AllowAny]
     serializer_class = UserLoginSerializer
@@ -123,8 +119,6 @@ class LoginView(APIView):
 class LogoutView(APIView):
     """
     Déconnexion utilisateur.
-    
-    Invalide le refresh token.
     """
     permission_classes = [IsAuthenticated]
     
@@ -153,61 +147,105 @@ class LogoutView(APIView):
 
 class VerifyEmailView(APIView):
     """
-    Vérification de l'adresse email.
+    Vérification de l'adresse email via code OTP.
     """
     permission_classes = [AllowAny]
     
     @extend_schema(
         tags=['Authentication'],
         summary="Vérifier l'email",
-        description="Vérifie l'adresse email avec le token reçu"
+        description="Vérifie l'adresse email avec le code reçu"
     )
-    def get(self, request, token):
-        try:
-            verification = EmailVerificationToken.objects.get(token=token)
-            
-            if not verification.is_valid:
-                return Response({
-                    'success': False,
-                    'error': {
-                        'code': 'INVALID_TOKEN',
-                        'message': 'Ce lien de vérification est invalide ou expiré'
-                    }
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Marquer l'email comme vérifié
-            verification.user.is_verified = True
-            verification.user.save(update_fields=['is_verified'])
-            verification.mark_as_used()
+    def post(self, request):
+        email = request.data.get('email')
+        code = request.data.get('code')
+        
+        if not email or not code:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'MISSING_FIELDS',
+                    'message': 'Email et code requis'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        verification = EmailVerificationCode.objects.filter(
+            email=email,
+            purpose='registration',
+            is_used=False
+        ).order_by('-created_at').first()
+        
+        if not verification:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'CODE_NOT_FOUND',
+                    'message': 'Aucun code de vérification trouvé'
+                }
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        if not verification.is_valid():
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'INVALID_CODE',
+                    'message': 'Code expiré ou invalide'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if verification.verify(code):
+            # Marquer l'utilisateur comme vérifié
+            if verification.user:
+                verification.user.is_verified = True
+                verification.user.save(update_fields=['is_verified'])
             
             return Response({
                 'success': True,
                 'message': 'Email vérifié avec succès'
             })
-            
-        except EmailVerificationToken.DoesNotExist:
+        else:
             return Response({
                 'success': False,
                 'error': {
-                    'code': 'TOKEN_NOT_FOUND',
-                    'message': 'Token de vérification non trouvé'
+                    'code': 'WRONG_CODE',
+                    'message': f'Code incorrect. {verification.remaining_attempts} tentative(s) restante(s).'
                 }
-            }, status=status.HTTP_404_NOT_FOUND)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ResendVerificationView(APIView):
     """
-    Renvoyer l'email de vérification.
+    Renvoyer le code de vérification.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     
     @extend_schema(
         tags=['Authentication'],
         summary="Renvoyer la vérification",
-        description="Envoie un nouveau lien de vérification par email"
+        description="Envoie un nouveau code de vérification par email"
     )
     def post(self, request):
-        user = request.user
+        email = request.data.get('email')
+        
+        if not email:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'MISSING_EMAIL',
+                    'message': 'Email requis'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'USER_NOT_FOUND',
+                    'message': 'Aucun compte avec cet email'
+                }
+            }, status=status.HTTP_404_NOT_FOUND)
         
         if user.is_verified:
             return Response({
@@ -218,18 +256,24 @@ class ResendVerificationView(APIView):
                 }
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Invalider les anciens tokens
-        EmailVerificationToken.objects.filter(user=user, is_used=False).update(is_used=True)
+        # Créer un nouveau code
+        verification = EmailVerificationCode.create_for_email(
+            email=email,
+            purpose='registration',
+            user=user
+        )
         
-        # Créer un nouveau token
-        verification = EmailVerificationToken.objects.create(user=user)
-        
-        # TODO: Envoyer l'email de vérification
-        # send_verification_email(user, verification.token)
+        # Envoyer l'email
+        from core.services.email_service import EmailService
+        EmailService.send_verification_code(
+            email=email,
+            code=verification.code,
+            purpose='registration'
+        )
         
         return Response({
             'success': True,
-            'message': 'Email de vérification envoyé'
+            'message': 'Code de vérification envoyé'
         })
 
 
@@ -254,21 +298,27 @@ class PasswordResetRequestView(APIView):
         try:
             user = User.objects.get(email=email)
             
-            # Invalider les anciens tokens
-            PasswordResetToken.objects.filter(user=user, is_used=False).update(is_used=True)
+            # Créer un code de vérification
+            verification = EmailVerificationCode.create_for_email(
+                email=email,
+                purpose='password_reset',
+                user=user
+            )
             
-            # Créer un nouveau token
-            reset_token = PasswordResetToken.objects.create(user=user)
-            
-            # TODO: Envoyer l'email de réinitialisation
-            # send_password_reset_email(user, reset_token.token)
+            # Envoyer l'email
+            from core.services.email_service import EmailService
+            EmailService.send_verification_code(
+                email=email,
+                code=verification.code,
+                purpose='password_reset'
+            )
             
         except User.DoesNotExist:
             pass  # Ne pas révéler si l'email existe
         
         return Response({
             'success': True,
-            'message': 'Si cet email existe, un lien de réinitialisation a été envoyé'
+            'message': 'Si cet email existe, un code de réinitialisation a été envoyé'
         })
 
 
@@ -329,9 +379,6 @@ class PasswordResetConfirmView(APIView):
 class UserProfileView(generics.RetrieveUpdateAPIView):
     """
     Profil de l'utilisateur connecté.
-    
-    GET: Récupère le profil
-    PATCH: Met à jour le profil
     """
     permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
@@ -369,7 +416,10 @@ class ChangePasswordView(APIView):
         description="Change le mot de passe de l'utilisateur connecté"
     )
     def put(self, request):
-        serializer = ChangePasswordSerializer(data=request.data)
+        serializer = ChangePasswordSerializer(
+            data=request.data,
+            context={'request': request}
+        )
         serializer.is_valid(raise_exception=True)
         
         user = request.user

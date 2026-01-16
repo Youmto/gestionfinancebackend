@@ -1,0 +1,31 @@
+{% extends "emails/base.html" %}
+
+{% block title %}{{ title }} - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}🔐{% endblock %}
+{% block header_title %}{{ title }}{% endblock %}
+
+{% block content %}
+<h2>Bonjour!</h2>
+
+<p>{{ message }}. Voici votre code de vérification :</p>
+
+<div class="code-box">
+    <div class="code">{{ code }}</div>
+</div>
+
+<p style="text-align: center; color: #6b7280;">
+    Ce code expire dans <strong>{{ validity_minutes }} minutes</strong>.
+</p>
+
+<div class="divider"></div>
+
+<div class="info-box">
+    <strong>⚠️ Important</strong><br>
+    Si vous n'avez pas demandé ce code, ignorez cet email. Ne partagez jamais ce code avec quelqu'un d'autre.
+</div>
+
+<p style="font-size: 12px; color: #9ca3af;">
+    Code demandé pour : {{ email }}
+</p>
+{% endblock %}

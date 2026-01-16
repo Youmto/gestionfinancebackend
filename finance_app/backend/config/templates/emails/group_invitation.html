@@ -1,0 +1,37 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Invitation groupe - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}👥{% endblock %}
+{% block header_title %}Invitation à un groupe{% endblock %}
+
+{% block content %}
+<h2>Bonjour!</h2>
+
+<p><strong>{{ inviter_name }}</strong> vous invite à rejoindre le groupe :</p>
+
+<div style="background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%); border-radius: 12px; padding: 25px; text-align: center; margin: 25px 0;">
+    <span style="font-size: 48px;">👥</span>
+    <h3 style="margin: 15px 0 5px 0; color: #1f2937;">{{ group_name }}</h3>
+</div>
+
+<p>En rejoignant ce groupe, vous pourrez :</p>
+<ul style="color: #4b5563;">
+    <li>Partager des dépenses avec les membres</li>
+    <li>Suivre qui doit quoi à qui</li>
+    <li>Simplifier les remboursements</li>
+</ul>
+
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ invite_url }}" class="btn">Rejoindre le groupe</a>
+</div>
+
+<div class="info-box">
+    <strong>ℹ️ Information</strong><br>
+    Si vous n'avez pas de compte {{ app_name }}, vous pourrez en créer un gratuitement.
+</div>
+
+<p style="font-size: 12px; color: #9ca3af;">
+    Si vous ne connaissez pas {{ inviter_name }} ou ne souhaitez pas rejoindre ce groupe, ignorez simplement cet email.
+</p>
+{% endblock %}

@@ -19,6 +19,8 @@ api_v1_patterns = [
     path('groups/', include('groups.urls')),
     path('reminders/', include('reminders.urls')),
     path('events/', include('events.urls')),
+    path('payments/', include('payments.urls')),
+    
 ]
 
 urlpatterns = [

@@ -6,26 +6,31 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from . import views
+from .views_verification import (
+    SendVerificationCodeView,
+    VerifyCodeView,
+    RegisterWithCodeView,
+    ResetPasswordWithCodeView,
+    ResendVerificationCodeView
+)
 
 app_name = 'accounts'
 
 urlpatterns = [
-    # Authentication
+    # Authentification existante
     path('register/', views.RegisterView.as_view(), name='register'),
     path('login/', views.LoginView.as_view(), name='login'),
     path('logout/', views.LogoutView.as_view(), name='logout'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
-    # Email verification
-    path('verify-email/<str:token>/', views.VerifyEmailView.as_view(), name='verify-email'),
-    path('resend-verification/', views.ResendVerificationView.as_view(), name='resend-verification'),
-    
-    # Password reset
-    path('password-reset/', views.PasswordResetRequestView.as_view(), name='password-reset'),
-    path('password-reset/confirm/', views.PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
-    
-    # User profile
+    # Profil
     path('me/', views.UserProfileView.as_view(), name='profile'),
-    path('me/password/', views.ChangePasswordView.as_view(), name='change-password'),
-    path('me/preferences/', views.NotificationPreferencesView.as_view(), name='preferences'),
+    path('change-password/', views.ChangePasswordView.as_view(), name='change_password'),
+    
+    # Vérification par code OTP
+    path('send-code/', SendVerificationCodeView.as_view(), name='send_code'),
+    path('verify-code/', VerifyCodeView.as_view(), name='verify_code'),
+    path('register-with-code/', RegisterWithCodeView.as_view(), name='register_with_code'),
+    path('reset-password-with-code/', ResetPasswordWithCodeView.as_view(), name='reset_password_with_code'),
+    path('resend-code/', ResendVerificationCodeView.as_view(), name='resend_code'),
 ]

@@ -1,0 +1,58 @@
+{% extends "emails/base.html" %}
+
+{% block title %}Alerte Budget - {{ app_name }}{% endblock %}
+
+{% block header_emoji %}{% if is_over_budget %}🚨{% else %}⚠️{% endif %}{% endblock %}
+{% block header_title %}{% if is_over_budget %}Budget dépassé!{% else %}Alerte Budget{% endif %}{% endblock %}
+
+{% block content %}
+<h2>Bonjour {{ first_name }}!</h2>
+
+{% if is_over_budget %}
+<div class="info-box alert">
+    <strong>🚨 Budget dépassé</strong><br>
+    Vous avez dépassé le budget de la catégorie <strong>{{ category_icon }} {{ category_name }}</strong>.
+</div>
+{% else %}
+<div class="info-box">
+    <strong>⚠️ Attention</strong><br>
+    Vous approchez de la limite du budget pour <strong>{{ category_icon }} {{ category_name }}</strong>.
+</div>
+{% endif %}
+
+<div class="category-item">
+    <span class="category-icon">{{ category_icon }}</span>
+    <div style="flex: 1;">
+        <strong>{{ category_name }}</strong>
+        <div class="progress-bar">
+            <div class="progress-fill" style="width: {% if percentage > 100 %}100{% else %}{{ percentage }}{% endif %}%; background-color: {% if is_over_budget %}#EF4444{% else %}#F59E0B{% endif %};"></div>
+        </div>
+    </div>
+    <div style="text-align: right;">
+        <span style="font-weight: 700; color: {% if is_over_budget %}#EF4444{% else %}#F59E0B{% endif %};">{{ percentage|floatformat:0 }}%</span>
+    </div>
+</div>
+
+<div class="stats-grid" style="margin-top: 20px;">
+    <table width="100%" cellpadding="10" cellspacing="0">
+        <tr>
+            <td style="text-align: center; background-color: #f9fafb; border-radius: 8px;">
+                <div class="stat-value">{{ budget|floatformat:0 }} XAF</div>
+                <div class="stat-label">Budget</div>
+            </td>
+            <td style="text-align: center; background-color: #f9fafb; border-radius: 8px;">
+                <div class="stat-value" style="color: {% if is_over_budget %}#EF4444{% else %}#F59E0B{% endif %};">{{ spent|floatformat:0 }} XAF</div>
+                <div class="stat-label">Dépensé</div>
+            </td>
+            <td style="text-align: center; background-color: #f9fafb; border-radius: 8px;">
+                <div class="stat-value" style="color: {% if remaining < 0 %}#EF4444{% else %}#10B981{% endif %};">{{ remaining|floatformat:0 }} XAF</div>
+                <div class="stat-label">Restant</div>
+            </td>
+        </tr>
+    </table>
+</div>
+
+<div style="text-align: center; margin-top: 25px;">
+    <a href="{{ frontend_url }}/budgets" class="btn">Voir mes budgets</a>
+</div>
+{% endblock %}

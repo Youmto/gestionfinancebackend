@@ -7,6 +7,7 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from core.models import BaseModel, SoftDeleteBaseModel
 
@@ -19,9 +20,12 @@ class Category(BaseModel):
     
     Attributs:
         - name: Nom de la catégorie
+        - description: Description détaillée
         - icon: Icône (emoji ou classe CSS)
         - color: Couleur en hexadécimal
         - type: Type de transaction (income/expense/both)
+        - budget: Budget mensuel alloué
+        - budget_alert_threshold: Seuil d'alerte en pourcentage
         - is_system: True si c'est une catégorie système
         - user: NULL pour système, utilisateur pour personnalisée
     """
@@ -35,6 +39,33 @@ class Category(BaseModel):
         max_length=100,
         verbose_name="Nom"
     )
+    
+    # ============ NOUVEAUX CHAMPS ============
+    description = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Description",
+        help_text="Description détaillée de la catégorie"
+    )
+    
+    budget = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0.00'))],
+        verbose_name="Budget mensuel",
+        help_text="Budget mensuel alloué à cette catégorie"
+    )
+    
+    budget_alert_threshold = models.IntegerField(
+        default=80,
+        validators=[MinValueValidator(0)],
+        verbose_name="Seuil d'alerte (%)",
+        help_text="Pourcentage du budget à partir duquel une alerte est envoyée"
+    )
+    # =========================================
+    
     icon = models.CharField(
         max_length=50,
         blank=True,
@@ -73,6 +104,7 @@ class Category(BaseModel):
         indexes = [
             models.Index(fields=['user', 'type']),
             models.Index(fields=['is_system']),
+            models.Index(fields=['budget']),  # NOUVEAU
         ]
         constraints = [
             models.UniqueConstraint(
@@ -90,6 +122,8 @@ class Category(BaseModel):
             raise ValidationError("Une catégorie système ne peut pas appartenir à un utilisateur.")
         if not self.is_system and not self.user:
             raise ValidationError("Une catégorie personnalisée doit appartenir à un utilisateur.")
+        if self.budget_alert_threshold < 0 or self.budget_alert_threshold > 100:
+            raise ValidationError("Le seuil d'alerte doit être entre 0 et 100.")
     
     @classmethod
     def get_for_user(cls, user, category_type=None):
@@ -105,6 +139,95 @@ class Category(BaseModel):
                 models.Q(type=category_type) | models.Q(type=cls.CategoryType.BOTH)
             )
         return queryset.order_by('name')
+    
+    # ============ NOUVELLES MÉTHODES ============
+    def get_monthly_spent(self, year=None, month=None):
+        """
+        Calcule le montant dépensé ce mois pour cette catégorie.
+        
+        Args:
+            year: Année (défaut: année courante)
+            month: Mois (défaut: mois courant)
+            
+        Returns:
+            Decimal: Montant total des dépenses
+        """
+        if year is None or month is None:
+            now = timezone.now()
+            year = now.year
+            month = now.month
+        
+        total = self.transactions.filter(
+            type=Transaction.TransactionType.EXPENSE,
+            date__year=year,
+            date__month=month,
+            is_deleted=False
+        ).aggregate(total=models.Sum('amount'))['total']
+        
+        return total or Decimal('0.00')
+    
+    def get_monthly_income(self, year=None, month=None):
+        """
+        Calcule les revenus du mois pour cette catégorie.
+        
+        Args:
+            year: Année (défaut: année courante)
+            month: Mois (défaut: mois courant)
+            
+        Returns:
+            Decimal: Montant total des revenus
+        """
+        if year is None or month is None:
+            now = timezone.now()
+            year = now.year
+            month = now.month
+        
+        total = self.transactions.filter(
+            type=Transaction.TransactionType.INCOME,
+            date__year=year,
+            date__month=month,
+            is_deleted=False
+        ).aggregate(total=models.Sum('amount'))['total']
+        
+        return total or Decimal('0.00')
+    
+    def get_budget_status(self, year=None, month=None):
+        """
+        Retourne le statut du budget (dépensé, restant, pourcentage).
+        
+        Args:
+            year: Année (défaut: année courante)
+            month: Mois (défaut: mois courant)
+            
+        Returns:
+            dict: Statut du budget ou None si pas de budget défini
+            {
+                'budget': float,
+                'spent': float,
+                'remaining': float,
+                'percentage': float,
+                'is_over_budget': bool,
+                'is_alert': bool,
+                'alert_threshold': int
+            }
+        """
+        if not self.budget:
+            return None
+        
+        spent = self.get_monthly_spent(year, month)
+        remaining = self.budget - spent
+        percentage = (spent / self.budget * 100) if self.budget > 0 else 0
+        
+        return {
+            'budget': float(self.budget),
+            'spent': float(spent),
+            'remaining': float(remaining),
+            'percentage': round(float(percentage), 2),
+            'is_over_budget': spent > self.budget,
+            'is_alert': percentage >= self.budget_alert_threshold,
+            'alert_threshold': self.budget_alert_threshold,
+        }
+    # ============================================
 
 
 class Transaction(SoftDeleteBaseModel):
@@ -341,7 +464,6 @@ class ExpenseSplit(BaseModel):
     
     def mark_as_paid(self):
         """Marque la part comme payée."""
-        from django.utils import timezone
         self.is_paid = True
         self.paid_at = timezone.now()
         self.save(update_fields=['is_paid', 'paid_at', 'updated_at'])
@@ -355,23 +477,128 @@ def create_default_categories():
     """
     default_categories = [
         # Dépenses
-        {'name': 'Alimentation', 'icon': '🍔', 'color': '#F59E0B', 'type': 'expense'},
-        {'name': 'Transport', 'icon': '🚗', 'color': '#3B82F6', 'type': 'expense'},
-        {'name': 'Logement', 'icon': '🏠', 'color': '#8B5CF6', 'type': 'expense'},
-        {'name': 'Factures & Services', 'icon': '💡', 'color': '#EF4444', 'type': 'expense'},
-        {'name': 'Divertissement', 'icon': '🎬', 'color': '#EC4899', 'type': 'expense'},
-        {'name': 'Shopping', 'icon': '🛒', 'color': '#14B8A6', 'type': 'expense'},
-        {'name': 'Santé', 'icon': '💊', 'color': '#10B981', 'type': 'expense'},
-        {'name': 'Éducation', 'icon': '📚', 'color': '#6366F1', 'type': 'expense'},
-        {'name': 'Voyages', 'icon': '✈️', 'color': '#F97316', 'type': 'expense'},
-        {'name': 'Autres dépenses', 'icon': '📦', 'color': '#6B7280', 'type': 'expense'},
+        {
+            'name': 'Alimentation',
+            'icon': '🍔',
+            'color': '#F59E0B',
+            'type': 'expense',
+            'description': 'Courses alimentaires, restaurants et livraisons',
+            'budget': None
+        },
+        {
+            'name': 'Transport',
+            'icon': '🚗',
+            'color': '#3B82F6',
+            'type': 'expense',
+            'description': 'Carburant, transports en commun, taxi, entretien véhicule',
+            'budget': None
+        },
+        {
+            'name': 'Logement',
+            'icon': '🏠',
+            'color': '#8B5CF6',
+            'type': 'expense',
+            'description': 'Loyer, charges, entretien, assurance habitation',
+            'budget': None
+        },
+        {
+            'name': 'Factures & Services',
+            'icon': '💡',
+            'color': '#EF4444',
+            'type': 'expense',
+            'description': 'Électricité, eau, internet, téléphone, abonnements',
+            'budget': None
+        },
+        {
+            'name': 'Divertissement',
+            'icon': '🎬',
+            'color': '#EC4899',
+            'type': 'expense',
+            'description': 'Cinéma, sorties, jeux, streaming, loisirs',
+            'budget': None
+        },
+        {
+            'name': 'Shopping',
+            'icon': '🛒',
+            'color': '#14B8A6',
+            'type': 'expense',
+            'description': 'Vêtements, électronique, achats divers',
+            'budget': None
+        },
+        {
+            'name': 'Santé',
+            'icon': '💊',
+            'color': '#10B981',
+            'type': 'expense',
+            'description': 'Médecin, pharmacie, mutuelle, optique',
+            'budget': None
+        },
+        {
+            'name': 'Éducation',
+            'icon': '📚',
+            'color': '#6366F1',
+            'type': 'expense',
+            'description': 'Formations, livres, cours en ligne, scolarité',
+            'budget': None
+        },
+        {
+            'name': 'Voyages',
+            'icon': '✈️',
+            'color': '#F97316',
+            'type': 'expense',
+            'description': 'Billets, hôtels, vacances, activités touristiques',
+            'budget': None
+        },
+        {
+            'name': 'Autres dépenses',
+            'icon': '📦',
+            'color': '#6B7280',
+            'type': 'expense',
+            'description': 'Dépenses diverses non catégorisées',
+            'budget': None
+        },
         
         # Revenus
-        {'name': 'Salaire', 'icon': '💰', 'color': '#22C55E', 'type': 'income'},
-        {'name': 'Freelance', 'icon': '💼', 'color': '#0EA5E9', 'type': 'income'},
-        {'name': 'Investissements', 'icon': '📈', 'color': '#A855F7', 'type': 'income'},
-        {'name': 'Cadeaux reçus', 'icon': '🎁', 'color': '#F43F5E', 'type': 'income'},
-        {'name': 'Autres revenus', 'icon': '💵', 'color': '#84CC16', 'type': 'income'},
+        {
+            'name': 'Salaire',
+            'icon': '💰',
+            'color': '#22C55E',
+            'type': 'income',
+            'description': 'Revenus salariaux mensuels et primes',
+            'budget': None
+        },
+        {
+            'name': 'Freelance',
+            'icon': '💼',
+            'color': '#0EA5E9',
+            'type': 'income',
+            'description': 'Revenus de missions freelance et consulting',
+            'budget': None
+        },
+        {
+            'name': 'Investissements',
+            'icon': '📈',
+            'color': '#A855F7',
+            'type': 'income',
+            'description': 'Dividendes, intérêts et gains d\'investissement',
+            'budget': None
+        },
+        {
+            'name': 'Cadeaux reçus',
+            'icon': '🎁',
+            'color': '#F43F5E',
+            'type': 'income',
+            'description': 'Cadeaux et dons reçus',
+            'budget': None
+        },
+        {
+            'name': 'Autres revenus',
+            'icon': '💵',
+            'color': '#84CC16',
+            'type': 'income',
+            'description': 'Autres sources de revenus divers',
+            'budget': None
+        },
     ]
     
     created_count = 0
@@ -383,6 +610,8 @@ def create_default_categories():
                 'icon': cat_data['icon'],
                 'color': cat_data['color'],
                 'type': cat_data['type'],
+                'description': cat_data['description'],
+                'budget': cat_data['budget'],
                 'user': None,
             }
         )
